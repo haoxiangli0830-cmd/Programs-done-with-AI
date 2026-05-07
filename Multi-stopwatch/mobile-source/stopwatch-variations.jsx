@@ -190,7 +190,11 @@ function useController(api) {
 
   const requestLap = (timer, now) => {
     const atMs = (window.elapsed ? window.elapsed(timer, now) : 0);
-    setPendingLap({ timerId: timer.id, atMs, accent: timer.color, defaultName: `Lap ${timer.laps.length + 1}` });
+    const d = new Date();
+    const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const defaultName = `${DAYS[d.getDay()]} ${String(d.getDate()).padStart(2,'0')} ${MONTHS[d.getMonth()]}, ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    setPendingLap({ timerId: timer.id, atMs, accent: timer.color, defaultName });
   };
   const confirmLap = (name) => { if (pendingLap) { api.addLap(pendingLap.timerId, name); setPendingLap(null); } };
 

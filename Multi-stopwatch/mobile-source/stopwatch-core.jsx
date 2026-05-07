@@ -71,6 +71,7 @@ function newTimer(idx = 0, name) {
     startedAt: null,
     accumMs: 0,
     laps: [],
+    sessions: [], // { id, startedAt, endedAt } wall-clock ms, appended on each pause
   };
 }
 
@@ -142,23 +143,34 @@ function useStopwatchStore() {
       update(id, (t) => (t.startedAt ? {} : { startedAt: Date.now() }));
     },
     pause(id) {
+      const now = Date.now();
       update(id, (t) => {
         if (!t.startedAt) return {};
-        return { startedAt: null, accumMs: t.accumMs + (Date.now() - t.startedAt) };
+        return {
+          startedAt: null,
+          accumMs: t.accumMs + (now - t.startedAt),
+          sessions: [...(t.sessions || []), { id: 's_' + Math.random().toString(36).slice(2, 8), startedAt: t.startedAt, endedAt: now }],
+        };
       });
     },
     toggle(id) {
+      const now = Date.now();
       update(id, (t) => {
-        if (t.startedAt) return { startedAt: null, accumMs: t.accumMs + (Date.now() - t.startedAt) };
-        return { startedAt: Date.now() };
+        if (t.startedAt) return {
+          startedAt: null,
+          accumMs: t.accumMs + (now - t.startedAt),
+          sessions: [...(t.sessions || []), { id: 's_' + Math.random().toString(36).slice(2, 8), startedAt: t.startedAt, endedAt: now }],
+        };
+        return { startedAt: now };
       });
     },
     reset(id) {
-      update(id, () => ({ startedAt: null, accumMs: 0, offsetMs: 0, laps: [] }));
+      update(id, () => ({ startedAt: null, accumMs: 0, offsetMs: 0, laps: [], sessions: [] }));
     },
     addLap(id, name) {
+      const now = Date.now();
       update(id, (t) => ({
-        laps: [...t.laps, { id: 'l_' + Math.random().toString(36).slice(2, 8), name: name || `Lap ${t.laps.length + 1}`, atMs: elapsed(t, Date.now()) }],
+        laps: [...t.laps, { id: 'l_' + Math.random().toString(36).slice(2, 8), name: name || `Lap ${t.laps.length + 1}`, atMs: elapsed(t, now), recordedAt: now }],
       }));
     },
     renameLap(timerId, lapId, name) {
@@ -174,7 +186,15 @@ function useStopwatchStore() {
     },
     pauseAll() {
       const now = Date.now();
-      setState((s) => ({ ...s, timers: s.timers.map((t) => (t.startedAt ? { ...t, startedAt: null, accumMs: t.accumMs + (now - t.startedAt) } : t)) }));
+      setState((s) => ({ ...s, timers: s.timers.map((t) => {
+        if (!t.startedAt) return t;
+        return {
+          ...t,
+          startedAt: null,
+          accumMs: t.accumMs + (now - t.startedAt),
+          sessions: [...(t.sessions || []), { id: 's_' + Math.random().toString(36).slice(2, 8), startedAt: t.startedAt, endedAt: now }],
+        };
+      }) }));
     },
   }), []);
 
@@ -197,6 +217,63 @@ function useNow(active) {
   return now;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Daily-log helpers — wall-clock session grouping with midnight splits.
+// ─────────────────────────────────────────────────────────────
+function localDateStr(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function midnightOf(ms) {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+// Split one {startedAt,endedAt} session at calendar-day boundaries.
+// Returns [{date:"YYYY-MM-DD", startMs, endMs}].
+function splitSessionDetailed(startedAt, endedAt) {
+  const result = [];
+  let cursor = startedAt;
+  while (true) {
+    const nextMidnight = midnightOf(cursor) + 86400000;
+    if (endedAt <= nextMidnight) {
+      result.push({ date: localDateStr(cursor), startMs: cursor, endMs: endedAt });
+      break;
+    }
+    result.push({ date: localDateStr(cursor), startMs: cursor, endMs: nextMidnight });
+    cursor = nextMidnight;
+  }
+  return result;
+}
+// Returns Map<"YYYY-MM-DD", [{startMs, endMs, ms}]>.
+function getSessionsByDay(sessions) {
+  const map = new Map();
+  for (const s of sessions) {
+    for (const { date, startMs, endMs } of splitSessionDetailed(s.startedAt, s.endedAt)) {
+      if (!map.has(date)) map.set(date, []);
+      map.get(date).push({ startMs, endMs, ms: endMs - startMs });
+    }
+  }
+  return map;
+}
+// "08:04" wall-clock HH:MM
+function fmtWallTime(ms) {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+// "YYYY-MM-DD" → "Today" / "Yesterday" / "Thu 07 May"
+function fmtDateLabel(dateStr) {
+  const todayStr = localDateStr(Date.now());
+  const yd = new Date(); yd.setDate(yd.getDate() - 1);
+  const yesterdayStr = localDateStr(yd.getTime());
+  if (dateStr === todayStr) return 'Today';
+  if (dateStr === yesterdayStr) return 'Yesterday';
+  const d = new Date(dateStr + 'T12:00:00');
+  const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${DAYS[d.getDay()]} ${String(d.getDate()).padStart(2,'0')} ${MONTHS[d.getMonth()]}`;
+}
+
 Object.assign(window, {
   fmt, fmtCompact, fmtHuman, ACCENT_COLORS, useStopwatchStore, useNow, elapsed,
+  localDateStr, getSessionsByDay, fmtWallTime, fmtDateLabel,
 });
